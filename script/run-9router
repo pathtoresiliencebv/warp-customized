@@ -134,6 +134,8 @@ while (( "$#" )); do
             shift; WARP_ARGS=("$@"); break ;;
         --help|-h)
             sed -n '2,20p' "$0"; exit 0 ;;
+        --print)
+            PRINT_ONLY=1; shift ;;
         *)
             CARGO_EXTRA+=("$1"); shift ;;
     esac
@@ -184,6 +186,33 @@ cat <<EOF
 EOF
 
 # --- launch -------------------------------------------------------------------
+if [[ "${PRINT_ONLY:-0}" == "1" ]]; then
+    printf '\n'
+    printf 'export WARP_SERVER_ROOT_URL=%q\n' "${WARP_SERVER_ROOT_URL}"
+    printf 'export WARP_WS_SERVER_URL=%q\n'   "${WARP_WS_SERVER_URL}"
+    if [[ -n "${WARP_SESSION_SHARING_SERVER_URL:-}" ]]; then
+        printf 'export WARP_SESSION_SHARING_SERVER_URL=%q\n' "${WARP_SESSION_SHARING_SERVER_URL}"
+    fi
+    if [[ -n "${WARP_FIREBASE_API_KEY:-}" ]]; then
+        printf 'export WARP_FIREBASE_API_KEY=%q\n' "${WARP_FIREBASE_API_KEY}"
+    fi
+    if [[ -n "${WARP_DISABLE_TELEMETRY:-}" ]]; then
+        printf 'export WARP_DISABLE_TELEMETRY=%q\n' "${WARP_DISABLE_TELEMETRY}"
+    fi
+    printf '\ncargo'
+    [[ ${#PROFILE_ARGS[@]} -gt 0 ]] && printf ' %s' "${PROFILE_ARGS[@]}"
+    printf ' run'
+    [[ ${#FEATURES_ARGS[@]} -gt 0 ]] && printf ' %s %s' "${FEATURES_ARGS[0]}" "${FEATURES_ARGS[1]}"
+    [[ ${#CARGO_EXTRA[@]} -gt 0 ]] && printf ' %s' "${CARGO_EXTRA[@]}"
+    [[ ${#EXTRA_CARGO_ARGS_ARR[@]} -gt 0 ]] && printf ' %s' "${EXTRA_CARGO_ARGS_ARR[@]}"
+    if [[ ${#WARP_ARGS[@]} -gt 0 ]]; then
+        printf ' --'
+        printf ' %s' "${WARP_ARGS[@]}"
+    fi
+    printf '\n'
+    exit 0
+fi
+
 exec cargo run \
     "${PROFILE_ARGS[@]}" \
     "${FEATURES_ARGS[@]}" \

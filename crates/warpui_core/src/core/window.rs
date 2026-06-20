@@ -183,6 +183,19 @@ impl StoredView {
         }
     }
 
+    // Warp-Customized: forward child_view_ids to the underlying GUI view, return
+    // empty vec for TUI. Mirrors the upstream master fix that adds this inherent
+    // method to StoredView (commit 1c2ade94 on origin/master). Without it,
+    // `collect_transferable_subtree` in app.rs fails to compile on Linux/wasm
+    // because StoredView is an enum and can't impl the AnyView trait directly.
+    pub fn child_view_ids(&self, app: &AppContext) -> Vec<EntityId> {
+        match self {
+            StoredView::Gui(view) => view.child_view_ids(app),
+            #[cfg(feature = "tui")]
+            StoredView::Tui(_) => Vec::new(),
+        }
+    }
+
     pub fn accessibility_data(
         &self,
         app: &mut AppContext,
