@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+#
+# Build and run Warp-Customized against a local 9router (or any warp-server
+# replacement).
+#
+# Usage:
+#   cp 9router.toml.example 9router.toml
+#   $EDITOR 9router.toml             # set server_root_url / ws_server_url
+#   ./script/run-9router
+#
+# Or override individual values on the command line:
+#   ./script/run-9router --profile release
+#   ./script/run-9router -- --some-warp-arg
+#
+# Anything after `--` is forwarded to the Warp binary.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
+cd "${REPO_ROOT}"
+
+CONFIG_FILE="${REPO_ROOT}/9router.toml"
+EXAMPLE_FILE="${REPO_ROOT}/9router.toml.example"
+
+# --- locate a TOML parser (prefer Python's tomllib; fall back to manual) ----
+toml_get() {
+    local key="$1"
+    local default="${2:-}"
+    python3 - "$CONFIG_FILE" "$key" "$default" <<'PY' 2>/dev/null || manual_toml_get "$key" "$default"
+import sys, tomllib
+path, key, default = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path, "rb") as fh:
+    data = tomllib.load(fh)
+parts = key.split(".")
+cur = data
+for p in parts:
+    if isinstance(cur, dict) and p in cur:
+        cur = cur[p]
+    else:
+        cur = None
+        break
+if cur is None:
+    sys.stdout.write(default)
+elif isinstance(cur, list):
+    sys.stdout.write(" ".join(str(x) for x in cur))
+elif isinstance(cur, bool):
+    sys.stdout.write("true" if cur else "false")
+else:
+    sys.stdout.write(str(cur))
+PY
+}
+
+manual_toml_get() {
+    # Very small fallback for systems without Python 3.11+. Only handles flat
+    # string values, list values (`["a", "b"]`), and `[env]` table.
+    local key="$1"
+    local default="${2:-}"
+    python3 - "$CONFIG_FILE" "$key" "$default" <<'PY' 2>/dev/null || { echo "$default"; return; }
+import sys, re
+path, key, default = sys.argv[1], sys.argv[2], sys.argv[3]
+text = open(path).read()
+lines = text.splitlines()
+target = None
+inside_env = False
+for line in lines:
+    stripped = line.split("#", 1)[0].rstrip()
+    if not stripped.strip():
+        continue
+    if stripped.startswith("[") and stripped.endswith("]"):
+        inside_env = (stripped == "[env]")
+        target = None
+        continue
+    if "=" not in stripped:
+        continue
+    k, _, v = stripped.partition("=")
+    k = k.strip()
+    v = v.strip()
+    full_key = ("env." if inside_env else "") + k
+    if full_key == key:
+        target = v
+if target is None:
+    sys.stdout.write(default)
+elif target.startswith("[") and target.endswith("]"):
+    inner = target[1:-1].strip()
+    items = [x.strip().strip('"').strip("'") for x in inner.split(",") if x.strip()]
+    sys.stdout.write(" ".join(items))
+else:
+    sys.stdout.write(target.strip('"').strip("'"))
+PY
+}
+
+# --- bootstrap config ---------------------------------------------------------
+if [[ ! -f "${CONFIG_FILE}" ]]; then
+    echo "==> 9router.toml not found; creating one from 9router.toml.example"
+    cp "${EXAMPLE_FILE}" "${CONFIG_FILE}"
+    echo "    Edit ${CONFIG_FILE} to point at your 9router, then re-run."
+    echo
+    echo "    Tip: the defaults assume a 9router on http://localhost:8080."
+    exit 1
+fi
+
+# --- read config --------------------------------------------------------------
+SERVER_ROOT_URL="$(toml_get server_root_url "http://localhost:8080")"
+WS_SERVER_URL="$(toml_get ws_server_url "ws://localhost:8080/graphql/v2")"
+SESSION_SHARING_URL="$(toml_get session_sharing_server_url "")"
+PROFILE="$(toml_get profile debug)"
+FEATURES_RAW="$(toml_get features "")"
+EXTRA_CARGO_ARGS_RAW="$(toml_get extra_cargo_args "")"
+WARP_FIREBASE_API_KEY="$(toml_get env.WARP_FIREBASE_API_KEY "")"
+WARP_DISABLE_TELEMETRY="$(toml_get env.WARP_DISABLE_TELEMETRY "")"
+
+# --- parse CLI ----------------------------------------------------------------
+WARP_ARGS=()
+CARGO_EXTRA=()
+while (( "$#" )); do
+    case "$1" in
+        --profile)
+            PROFILE="$2"; shift 2 ;;
+        --profile=*)
+            PROFILE="${1#*=}"; shift ;;
+        --server-root-url)
+            SERVER_ROOT_URL="$2"; shift 2 ;;
+        --server-root-url=*)
+            SERVER_ROOT_URL="${1#*=}"; shift ;;
+        --ws-server-url)
+            WS_SERVER_URL="$2"; shift 2 ;;
+        --ws-server-url=*)
+            WS_SERVER_URL="${1#*=}"; shift ;;
+        --features)
+            FEATURES_RAW="$2"; shift 2 ;;
+        --features=*)
+            FEATURES_RAW="${1#*=}"; shift ;;
+        --)
+            shift; WARP_ARGS=("$@"); break ;;
+        --help|-h)
+            sed -n '2,20p' "$0"; exit 0 ;;
+        *)
+            CARGO_EXTRA+=("$1"); shift ;;
+    esac
+done
+
+# --- export env ----------------------------------------------------------------
+export WARP_SERVER_ROOT_URL="${SERVER_ROOT_URL}"
+export WARP_WS_SERVER_URL="${WS_SERVER_URL}"
+if [[ -n "${SESSION_SHARING_URL}" ]]; then
+    export WARP_SESSION_SHARING_SERVER_URL="${SESSION_SHARING_URL}"
+fi
+if [[ -n "${WARP_FIREBASE_API_KEY}" ]]; then
+    export WARP_FIREBASE_API_KEY
+fi
+if [[ -n "${WARP_DISABLE_TELEMETRY}" ]]; then
+    export WARP_DISABLE_TELEMETRY
+fi
+
+# --- assemble cargo invocation -------------------------------------------------
+FEATURES_ARGS=()
+if [[ -n "${FEATURES_RAW// /}" ]]; then
+    # Convert space-separated list to comma-separated --features= form
+    joined=$(echo "${FEATURES_RAW}" | tr ' ' ',')
+    FEATURES_ARGS=(--features "${joined}")
+fi
+
+PROFILE_ARGS=()
+case "${PROFILE}" in
+    debug)   PROFILE_ARGS=() ;;
+    release) PROFILE_ARGS=(--release) ;;
+    *) echo "Unknown profile '${PROFILE}' (use 'debug' or 'release')" >&2; exit 1 ;;
+esac
+
+EXTRA_CARGO_ARGS_ARR=()
+if [[ -n "${EXTRA_CARGO_ARGS_RAW// /}" ]]; then
+    # shellcheck disable=SC2206
+    EXTRA_CARGO_ARGS_ARR=(${EXTRA_CARGO_ARGS_RAW})
+fi
+
+# --- print summary ------------------------------------------------------------
+cat <<EOF
+==> Running Warp-Customized against 9router
+    server_root_url        = ${SERVER_ROOT_URL}
+    ws_server_url          = ${WS_SERVER_URL}
+    session_sharing_url    = ${SESSION_SHARING_URL:-<disabled>}
+    profile                = ${PROFILE}
+    features               = ${FEATURES_RAW:-<none>}
+EOF
+
+# --- launch -------------------------------------------------------------------
+exec cargo run \
+    "${PROFILE_ARGS[@]}" \
+    "${FEATURES_ARGS[@]}" \
+    "${CARGO_EXTRA[@]}" \
+    "${EXTRA_CARGO_ARGS_ARR[@]}" \
+    -- \
+    "${WARP_ARGS[@]}"

@@ -1,0 +1,61 @@
+# 9router configuration for Warp-Customized.
+#
+# Copy this file to `9router.toml` next to it and fill in your values.
+# `9router.toml` is git-ignored so it stays local.
+#
+# This file is consumed by `script/run-9router` (and `script/run-9router-release`).
+# Every field has a sensible default, but the URLs MUST be set for the AI /
+# Drive / agent-mode features to talk to your 9router instead of warp.dev.
+
+# -----------------------------------------------------------------------------
+# Core endpoints
+# -----------------------------------------------------------------------------
+
+# HTTP root of your 9router (or the warp-server proxy in front of it).
+# Examples:
+#   server_root_url = "http://localhost:8080"
+#   server_root_url = "https://9router.example.internal"
+server_root_url = "http://localhost:8080"
+
+# WebSocket endpoint of your 9router for the GraphQL subscription stream.
+# Warp uses `/graphql/v2` as the subscription path.
+ws_server_url = "ws://localhost:8080/graphql/v2"
+
+# Optional: WebSocket endpoint for the session sharing server.
+# Leave commented out to disable session sharing.
+# session_sharing_server_url = "ws://localhost:8081"
+
+# -----------------------------------------------------------------------------
+# Build options
+# -----------------------------------------------------------------------------
+
+# Build profile: "debug" (faster build, slower runtime) or "release" (slow build, fast).
+profile = "debug"
+
+# Extra cargo features to enable when building. Warp-Customized supports:
+#   - "skip_login"    : bypass Warp account login (useful when 9router handles auth).
+#   - "fast_dev"      : shortens link-time for faster local iteration.
+#   - any feature your 9router requires.
+#
+# The default below is appropriate for a self-hosted 9router that performs its
+# own authentication. Remove "skip_login" if your 9router still talks to
+# warp.dev auth.
+features = ["skip_login"]
+
+# Extra cargo arguments passed to `cargo run`. Use this for `--target`,
+# `--no-default-features`, etc. Leave empty for the default build.
+extra_cargo_args = []
+
+# -----------------------------------------------------------------------------
+# Runtime options
+# -----------------------------------------------------------------------------
+
+# Extra environment variables exported when launching Warp. Use this to set
+# API keys, point Warp's auth at a non-Google Firebase project, etc.
+#
+# Example:
+#   [env]
+#   WARP_FIREBASE_API_KEY = "your-firebase-key"
+#   WARP_DISABLE_TELEMETRY = "1"
+[env]
+# WARP_DISABLE_TELEMETRY = "1"
